@@ -67,7 +67,7 @@ if uploaded_file:
         
         submitted = st.form_submit_button("Generate Certificate")
 
-    # 3. Process the Form
+# 3. Process the Form
     if submitted and emp_name:
         # Map user selection to page index
         idx_map = {
@@ -81,4 +81,17 @@ if uploaded_file:
             uploaded_file.seek(0)
             
             with st.spinner("Creating PDF..."):
-                pdf_bytes = generate
+                pdf_bytes = generate_pdf(uploaded_file, idx_map[option], emp_name, cert_date)
+            
+            st.success(f"✅ Success! Certificate ready for {emp_name}")
+            
+            # 4. Download Button
+            st.download_button(
+                label="⬇️ Download PDF",
+                data=pdf_bytes,
+                file_name=f"{emp_name.replace(' ', '_')}_Certificate.pdf",
+                mime="application/pdf"
+            )
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
