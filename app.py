@@ -2,9 +2,9 @@ import streamlit as st
 import fitz  # PyMuPDF
 import io
 import os
+from datetime import datetime
 
 # --- CONFIGURATION ---
-# This must match the exact name of the file in your repository
 TEMPLATE_FILENAME = "Onboarding Certificate [CR team].pdf"
 
 def generate_pdf(filename, template_idx, name, date_str):
@@ -13,17 +13,16 @@ def generate_pdf(filename, template_idx, name, date_str):
     page = doc[template_idx]
     
     # 1. ANALYZE REFERENCE TEXT ("We acknowledge that")
-    # We use this to get the perfect Font Size and Y-Alignment (Baseline)
     ref_phrase = "We acknowledge that"
     ref_instances = page.search_for(ref_phrase)
     
-    # Default values (fallback)
+    # Default values
     ref_y = None
     ref_height = 12 
     
     if ref_instances:
         ref_rect = ref_instances[0] 
-        ref_y = ref_rect.y1   # The bottom coordinates of the text "that"
+        ref_y = ref_rect.y1 
         ref_height = ref_rect.height 
     
     # 2. DEFINE REPLACEMENTS
@@ -40,16 +39,12 @@ def generate_pdf(filename, template_idx, name, date_str):
         
         if instances:
             for rect in instances:
-                # Mark for redaction (transparent delete)
                 page.add_redact_annot(rect)
                 
-                # Determine Font Size and Position
                 if item["is_name"] and ref_y:
-                    # Smart Alignment: align name with "We acknowledge that"
                     f_size = ref_height * 0.95 
                     insert_y = ref_y - 2 
                 else:
-                    # Fallback for Date
                     f_size = rect.height * 0.9
                     insert_y = rect.y1 - 2
 
@@ -58,13 +53,13 @@ def generate_pdf(filename, template_idx, name, date_str):
                     "y": insert_y,
                     "text": item["value"],
                     "size": f_size,
-                    "font": "hebo" if item["is_name"] else "helv" # Bold Name, Regular Date
+                    "font": "hebo" if item["is_name"] else "helv"
                 })
 
-    # 4. APPLY REDACTION (Erase old text, keep background images)
+    # 4. APPLY REDACTION
     page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=fitz.PDF_REDACT_IMAGE_NONE)
 
-    # 5. INSERT NEW TEXT (Always White)
+    # 5. INSERT NEW TEXT
     for insert in insertions:
         page.insert_text(
             fitz.Point(insert["x"], insert["y"]),
@@ -74,7 +69,6 @@ def generate_pdf(filename, template_idx, name, date_str):
             color=(1, 1, 1) # Pure White
         )
     
-    # Save output to memory
     output_buffer = io.BytesIO()
     output_doc = fitz.open()
     output_doc.insert_pdf(doc, from_page=template_idx, to_page=template_idx)
@@ -88,12 +82,14 @@ st.set_page_config(page_title="Cert Generator", layout="centered")
 
 st.title("🎓 Certificate Generator")
 
-# Check if the template exists in the repo
 if not os.path.exists(TEMPLATE_FILENAME):
-    st.error(f"⚠️ Error: The file '{TEMPLATE_FILENAME}' was not found in the repository.")
-    st.info("Please make sure you have uploaded the PDF to the same folder as this script.")
+    st.error(f"⚠️ Error: The file '{TEMPLATE_FILENAME}' was not found.")
+    st.info("Please make sure the PDF is in the same folder as this script.")
 else:
     st.write("Fill in the details below to generate a new certificate.")
+    
+    # Get today's date formatted as DD-MMM-YYYY (e.g., 13-Dec-2025)
+    today_str = datetime.today().strftime('%d-%b-%Y')
     
     with st.form("certificate_form"):
         st.subheader("1. Enter Details")
@@ -101,7 +97,8 @@ else:
         with col1:
             emp_name = st.text_input("Employee Name", placeholder="Mario Rossi")
         with col2:
-            cert_date = st.text_input("Date", value="12-Dec-2025")
+            # Set default value to today_str
+            cert_date = st.text_input("Date", value=today_str)
         
         st.subheader("2. Select Template")
         option = st.selectbox("Version", ("Monitoring (2 Signers)", "Monitoring (1 Signer)", "EasyMap"))
