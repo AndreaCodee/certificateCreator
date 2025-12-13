@@ -1,10 +1,15 @@
 import streamlit as st
 import fitz  # PyMuPDF
 import io
+import os
 
-def generate_pdf(input_pdf_stream, template_idx, name, date_str):
-    # Read the uploaded file
-    doc = fitz.open(stream=input_pdf_stream.read(), filetype="pdf")
+# --- CONFIGURATION ---
+# This must match the exact name of the file in your repository
+TEMPLATE_FILENAME = "Onboarding Certificate [CR team].pdf"
+
+def generate_pdf(filename, template_idx, name, date_str):
+    # Open the file directly from the disk
+    doc = fitz.open(filename)
     page = doc[template_idx]
     
     # 1. ANALYZE REFERENCE TEXT ("We acknowledge that")
@@ -17,10 +22,9 @@ def generate_pdf(input_pdf_stream, template_idx, name, date_str):
     ref_height = 12 
     
     if ref_instances:
-        # Use the first instance found to establish the baseline
         ref_rect = ref_instances[0] 
         ref_y = ref_rect.y1   # The bottom coordinates of the text "that"
-        ref_height = ref_rect.height # The height of the text "that"
+        ref_height = ref_rect.height 
     
     # 2. DEFINE REPLACEMENTS
     replacements = [
@@ -28,7 +32,6 @@ def generate_pdf(input_pdf_stream, template_idx, name, date_str):
         {"placeholder": "DD-MMM-YYYY", "value": date_str, "is_name": False}
     ]
 
-    # Queue for text to insert
     insertions = []
 
     # 3. MARK OLD TEXT FOR DELETION & CALCULATE NEW POSITIONS
@@ -42,13 +45,11 @@ def generate_pdf(input_pdf_stream, template_idx, name, date_str):
                 
                 # Determine Font Size and Position
                 if item["is_name"] and ref_y:
-                    # SMART ALIGNMENT: 
-                    # We force the name to sit on the same Y-line as "We acknowledge that"
-                    # We use the reference height to ensure the name matches the sentence size.
+                    # Smart Alignment: align name with "We acknowledge that"
                     f_size = ref_height * 0.95 
-                    insert_y = ref_y - 2 # Tiny adjustment to align baseline perfectly
+                    insert_y = ref_y - 2 
                 else:
-                    # Fallback for Date (use its own placeholder size)
+                    # Fallback for Date
                     f_size = rect.height * 0.9
                     insert_y = rect.y1 - 2
 
@@ -73,7 +74,7 @@ def generate_pdf(input_pdf_stream, template_idx, name, date_str):
             color=(1, 1, 1) # Pure White
         )
     
-    # Save output
+    # Save output to memory
     output_buffer = io.BytesIO()
     output_doc = fitz.open()
     output_doc.insert_pdf(doc, from_page=template_idx, to_page=template_idx)
@@ -82,14 +83,18 @@ def generate_pdf(input_pdf_stream, template_idx, name, date_str):
     
     return output_buffer.getvalue()
 
-# --- STREAMLIT UI ---
+# --- STREAMLIT USER INTERFACE ---
 st.set_page_config(page_title="Cert Generator", layout="centered")
+
 st.title("🎓 Certificate Generator")
-st.write("Upload the blank certificate PDF below.")
 
-uploaded_file = st.file_uploader("Upload 'Onboarding Certificate [CR team].pdf'", type="pdf")
-
-if uploaded_file:
+# Check if the template exists in the repo
+if not os.path.exists(TEMPLATE_FILENAME):
+    st.error(f"⚠️ Error: The file '{TEMPLATE_FILENAME}' was not found in the repository.")
+    st.info("Please make sure you have uploaded the PDF to the same folder as this script.")
+else:
+    st.write("Fill in the details below to generate a new certificate.")
+    
     with st.form("certificate_form"):
         st.subheader("1. Enter Details")
         col1, col2 = st.columns(2)
@@ -107,15 +112,17 @@ if uploaded_file:
         idx_map = {"Monitoring (2 Signers)": 3, "Monitoring (1 Signer)": 4, "EasyMap": 9}
         
         try:
-            uploaded_file.seek(0)
             with st.spinner("Processing..."):
-                pdf_bytes = generate_pdf(uploaded_file, idx_map[option], emp_name, cert_date)
+                pdf_bytes = generate_pdf(TEMPLATE_FILENAME, idx_map[option], emp_name, cert_date)
             
             st.success(f"✅ Ready: {emp_name}")
-            st.download_button("⬇️ Download PDF", pdf_bytes, f"{emp_name.replace(' ', '_')}_Certificate.pdf", "application/pdf")
+            
+            st.download_button(
+                label="⬇️ Download PDF", 
+                data=pdf_bytes, 
+                file_name=f"{emp_name.replace(' ', '_')}_Certificate.pdf", 
+                mime="application/pdf"
+            )
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
-
-else:
-    st.info("👋 Waiting for file upload...")
