@@ -8,8 +8,7 @@ from datetime import datetime
 # --- CONFIGURATION ---
 TEMPLATE_FILENAME = "Onboarding Certificate [CR team].pdf"
 
-# TEAM DEFINITIONS
-# Ensure these match your uploaded filenames exactly
+# TEAM DEFINITIONS (Ensure these match your uploaded files)
 TEAM = {
     "Andrea Bondi":          "sig_andrea.png",
     "Laura Carrera":         "sig_laura.png",
@@ -17,13 +16,25 @@ TEAM = {
     "Lisa Harrsen":          "sig_lisa.png"
 }
 
-# CONFIG: Signature Dimensions
+# SIGNATURE DIMENSIONS
 SIG_WIDTH = 180
 SIG_HEIGHT = 70
 BOTTOM_MARGIN_CM = 1.5  # Distance from bottom of page
 
 def cm_to_points(cm):
     return cm * 28.3465
+
+def get_template_index(mode):
+    """
+    Returns the correct page index based on your latest file structure:
+    - [cite_start]Page 3 (Index 2) = Monitoring Certificate [cite: 20]
+    - [cite_start]Page 5 (Index 4) = EasyMap Certificate [cite: 36]
+    """
+    if mode == "Monitoring":
+        return 2 
+    elif mode == "EasyMap":
+        return 4
+    return 2 # Default
 
 def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
     doc = fitz.open(filename)
@@ -34,7 +45,6 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
     page_h = page.rect.height
     
     # Calculate Y Position (Bottom aligned)
-    # Position = Page Height - Margin - Signature Height
     y_pos = page_h - cm_to_points(BOTTOM_MARGIN_CM) - SIG_HEIGHT
 
     # --- PART 1: FILL TEXT ---
@@ -43,7 +53,7 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
         {"placeholder": "DD-MMM-YYYY", "value": date_str, "is_name": False}
     ]
 
-    # Find "Reference" text for alignment (optional but good for polish)
+    # Find "Reference" text for alignment
     ref_instances = page.search_for("We acknowledge that")
     ref_y = ref_instances[0].y1 if ref_instances else None
     ref_h = ref_instances[0].height if ref_instances else 12
@@ -86,14 +96,14 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
         
     # Case B: Others (Dual Signer) -> Left & Right
     else:
-        # Left Position (25% of page width)
+        # Left Position (25% of page width) -> Andrea
         x_left = (page_w * 0.25) - (SIG_WIDTH / 2)
         sigs_to_insert.append({
             "file": TEAM["Andrea Bondi"],
             "rect": fitz.Rect(x_left, y_pos, x_left + SIG_WIDTH, y_pos + SIG_HEIGHT)
         })
         
-        # Right Position (75% of page width)
+        # Right Position (75% of page width) -> Creator
         x_right = (page_w * 0.75) - (SIG_WIDTH / 2)
         sigs_to_insert.append({
             "file": TEAM[creator_name],
@@ -109,16 +119,15 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
     
     # 1. Save PDF Bytes
     output_buffer = io.BytesIO()
-    # Create new PDF with ONLY the modified page
     output_doc = fitz.open()
+    # Create new PDF with ONLY the selected page
     output_doc.insert_pdf(doc, from_page=template_idx, to_page=template_idx)
     output_doc.save(output_buffer)
     
     # 2. Generate Preview Image
-    # Get the page from the NEW document (which has only 1 page now, index 0)
     preview_page = output_doc[0]
     pix = preview_page.get_pixmap(dpi=150)
-    preview_bytes = pix.tobytes("png") # Explicitly format as PNG
+    preview_bytes = pix.tobytes("png")
     
     output_doc.close()
     
@@ -132,7 +141,7 @@ if not os.path.exists(TEMPLATE_FILENAME):
     st.error(f"⚠️ Error: '{TEMPLATE_FILENAME}' not found.")
     st.stop()
 
-# SIDEBAR CONFIG
+# SIDEBAR
 st.sidebar.header("Configuration")
 creator = st.sidebar.selectbox("Certificate Creator", list(TEAM.keys()))
 
@@ -143,15 +152,6 @@ if not os.path.exists(TEAM[creator]):
 tab1, tab2 = st.tabs(["👤 Single Certificate", "👥 Batch Generation"])
 today_str = datetime.today().strftime('%d-%b-%Y')
 idx_map = {"Monitoring": "Monitoring", "EasyMap": "EasyMap"}
-
-def get_template_index(mode, signer_name):
-    # Adjust based on your PDF structure
-    is_andrea = (signer_name == "Andrea Bondi")
-    if mode == "Monitoring":
-        return 4 if is_andrea else 3
-    elif mode == "EasyMap":
-        return 9
-    return 3
 
 # SINGLE MODE
 with tab1:
@@ -165,7 +165,7 @@ with tab1:
     
     with col2:
         if s_submit and s_name:
-            t_idx = get_template_index(s_type, creator)
+            t_idx = get_template_index(s_type) # Fixed: removed creator arg
             try:
                 pdf_bytes, preview_img = generate_pdf(TEMPLATE_FILENAME, t_idx, s_name, s_date, creator)
                 
@@ -188,13 +188,12 @@ with tab2:
     
     if b_submit and b_names:
         names = [n.strip() for n in b_names.split('\n') if n.strip()]
-        t_idx = get_template_index(b_type, creator)
+        t_idx = get_template_index(b_type) # Fixed: removed creator arg
         if names:
             zip_buffer = io.BytesIO()
             with st.spinner(f"Processing {len(names)} certificates..."):
                 with zipfile.ZipFile(zip_buffer, "w") as zf:
                     for name in names:
-                        # Ignore preview in batch
                         pdf_bytes, _ = generate_pdf(TEMPLATE_FILENAME, t_idx, name, b_date, creator)
                         zf.writestr(f"{name.replace(' ', '_')}_Certificate.pdf", pdf_bytes)
             st.success(f"✅ Created {len(names)} certificates!")
