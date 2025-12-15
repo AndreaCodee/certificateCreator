@@ -30,7 +30,7 @@ TEAM = {
 # DIMENSIONS
 SIG_WIDTH = 120        
 SIG_HEIGHT = 50        
-BOTTOM_MARGIN_CM = 3.5 # Increased margin to ensure text doesn't fall off page
+BOTTOM_MARGIN_CM = 3.0 # Adjusted to 3.0 (was 3.5) to fix overlap
 
 def cm_to_points(cm):
     return cm * 28.3465
