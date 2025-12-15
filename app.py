@@ -30,7 +30,7 @@ TEAM = {
 # DIMENSIONS
 SIG_WIDTH = 120        
 SIG_HEIGHT = 50        
-BOTTOM_MARGIN_CM = 3.0 # Adjusted to 3.0 (was 3.5) to fix overlap
+BOTTOM_MARGIN_CM = 2.7 # Reduced to 2.7 to move it slightly lower
 
 def cm_to_points(cm):
     return cm * 28.3465
@@ -120,7 +120,7 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
             rect = fitz.Rect(block["x"], sig_y, block["x"] + SIG_WIDTH, sig_y + SIG_HEIGHT)
             page.insert_image(rect, filename=block["file"])
         
-        # B. Insert Centered Name
+        # B. Insert Centered Name (Black)
         name_w = fitz.get_text_length(block["name"], fontname="hebo", fontsize=10)
         name_x = block["center_x"] - (name_w / 2)
         
@@ -132,7 +132,7 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
             color=(0, 0, 0)
         )
         
-        # C. Insert Centered Title
+        # C. Insert Centered Title (White)
         title_w = fitz.get_text_length(block["title"], fontname="helv", fontsize=8)
         title_x = block["center_x"] - (title_w / 2)
         
@@ -141,7 +141,7 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
             block["title"],
             fontsize=8,
             fontname="helv", # Regular
-            color=(0.3, 0.3, 0.3)
+            color=(1, 1, 1) # White
         )
 
     # --- PART 3: OUTPUT ---
