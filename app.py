@@ -2,14 +2,12 @@ import streamlit as st
 import fitz  # PyMuPDF
 import io
 import os
-import zipfile
 from datetime import datetime
 
 # --- CONFIGURATION ---
 TEMPLATE_FILENAME = "Onboarding Certificate [CR team].pdf"
 
 # TEAM DEFINITIONS
-# Update 'file' to point to the HANDWRITTEN signature only
 TEAM = {
     "Andrea Bondi": {
         "title": "Customer Relations Manager",
@@ -30,12 +28,16 @@ TEAM = {
 }
 
 # DIMENSIONS
-SIG_WIDTH = 120        # Width of the handwritten signature
-SIG_HEIGHT = 50        # Height of the handwritten signature
-BOTTOM_MARGIN_CM = 2.5 # Distance from bottom of page to the START of the signature block
+SIG_WIDTH = 120        
+SIG_HEIGHT = 50        
+BOTTOM_MARGIN_CM = 3.5 # Increased margin to ensure text doesn't fall off page
 
 def cm_to_points(cm):
     return cm * 28.3465
+
+def get_text_width(text, fontsize, fontname, page):
+    """Calculates the width of a string in points to allow centering."""
+    return fitz.getTextLength(text, fontname=fontname, fontsize=fontsize)
 
 def get_template_index(mode):
     if mode == "Monitoring":
@@ -54,15 +56,13 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
     
     # Calculate Y Positions
     # We build the block from bottom up: Title -> Name -> Signature
-    # 1. Base Y (where the block starts visually)
     base_y = page_h - cm_to_points(BOTTOM_MARGIN_CM)
     
-    # 2. Signature Image Position
     sig_y = base_y
     
-    # 3. Text Positions (Below the signature)
-    name_y = sig_y + SIG_HEIGHT + 10   # Name is 10px below image
-    title_y = name_y + 12              # Title is 12px below name
+    # Reduced gaps here (closer to image)
+    name_y = sig_y + SIG_HEIGHT + 3    # Only 3px gap
+    title_y = name_y + 11              # Tight spacing for title
 
     # --- PART 1: FILL EMPLOYEE DATA ---
     replacements = [
@@ -99,51 +99,49 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
     # --- PART 2: INSERT SIGNATURE BLOCKS ---
     blocks_to_insert = []
     
-    # Helper to define a block
     def create_block(name, x_center):
         return {
             "name": name,
             "title": TEAM[name]["title"],
             "file": TEAM[name]["file"],
-            "x": x_center - (SIG_WIDTH / 2), # Centered on x_center
-            "center_x": x_center # Store center for text alignment
+            "x": x_center - (SIG_WIDTH / 2),
+            "center_x": x_center
         }
 
-    # LOGIC: Andrea Center (Single) OR Andrea Left + Creator Right (Dual)
     if creator_name == "Andrea Bondi":
         blocks_to_insert.append(create_block("Andrea Bondi", page_w / 2))
     else:
         blocks_to_insert.append(create_block("Andrea Bondi", page_w * 0.25))
         blocks_to_insert.append(create_block(creator_name, page_w * 0.75))
 
-    # EXECUTE INSERTION
     for block in blocks_to_insert:
         # A. Insert Signature Image
         if os.path.exists(block["file"]):
             rect = fitz.Rect(block["x"], sig_y, block["x"] + SIG_WIDTH, sig_y + SIG_HEIGHT)
             page.insert_image(rect, filename=block["file"])
         
-        # B. Insert Name (Bold) - Centered under image
-        # PyMuPDF doesn't automatically center text, so we estimate width or just left align
-        # For true centering we need to calculate text width, but left-aligning to the image start is usually safe enough
-        # Let's try to center it roughly by calculating text width
+        # B. Insert Centered Name
+        name_w = fitz.get_text_length(block["name"], fontname="hebo", fontsize=10)
+        name_x = block["center_x"] - (name_w / 2)
         
-        # Insert Name
         page.insert_text(
-            fitz.Point(block["x"], name_y), # Align with left of signature
+            fitz.Point(name_x, name_y), 
             block["name"],
             fontsize=10,
             fontname="hebo", # Bold
-            color=(0, 0, 0)  # Black
+            color=(0, 0, 0)
         )
         
-        # Insert Title
+        # C. Insert Centered Title
+        title_w = fitz.get_text_length(block["title"], fontname="helv", fontsize=8)
+        title_x = block["center_x"] - (title_w / 2)
+        
         page.insert_text(
-            fitz.Point(block["x"], title_y),
+            fitz.Point(title_x, title_y),
             block["title"],
             fontsize=8,
             fontname="helv", # Regular
-            color=(0.3, 0.3, 0.3) # Dark Grey
+            color=(0.3, 0.3, 0.3)
         )
 
     # --- PART 3: OUTPUT ---
