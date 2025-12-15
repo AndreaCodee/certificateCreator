@@ -9,7 +9,6 @@ from datetime import datetime
 TEMPLATE_FILENAME = "Onboarding Certificate [CR team].pdf"
 
 # 1. DEFINE TEAM MEMBERS
-# Keys must match the dropdown names exactly
 TEAM = {
     "Andrea Bondi": {
         "title": "Customer Relations Manager",
@@ -31,19 +30,16 @@ TEAM = {
 
 def get_template_index(mode, signer_name):
     """
-    Determines which page to use based on the Mode (Monitoring/EasyMap)
-    and who is signing (Andrea = Single, Others = Double).
+    Selects the correct page.
+    - Andrea (Single Mode) -> Page 5 (Index 4)
+    - Others (Dual Mode)   -> Page 4 (Index 3)
+    - EasyMap              -> Page 10 (Index 9)
     """
     is_andrea = (signer_name == "Andrea Bondi")
     
     if mode == "Monitoring":
-        # [cite_start]If Andrea, use Page 5 (Index 4) [cite: 66] - Single Signer
-        # [cite_start]If Others, use Page 4 (Index 3) [cite: 48] - Double Signer
         return 4 if is_andrea else 3
     elif mode == "EasyMap":
-        # [cite_start]Page 10 (Index 9) [cite: 121] is the EasyMap template.
-        # It has 2 signatures by default. If Andrea does it alone, we might need logic to 
-        # wipe the second signature, but for now we stick to the requested 2-signer logic.
         return 9
     return 3
 
@@ -53,7 +49,6 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
     
     # --- PART 1: FILL EMPLOYEE NAME & DATE ---
     
-    # [cite_start]Analyze alignment using "We acknowledge that" [cite: 35]
     ref_phrase = "We acknowledge that"
     ref_instances = page.search_for(ref_phrase)
     ref_y = None
@@ -63,7 +58,6 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
         ref_y = ref_rect.y1
         ref_height = ref_rect.height
 
-    # Text Replacements (Name & Date)
     replacements = [
         {"placeholder": "[Employee Name]", "value": emp_name, "is_name": True},
         {"placeholder": "DD-MMM-YYYY", "value": date_str, "is_name": False}
@@ -93,55 +87,30 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
     # --- PART 2: HANDLE SIGNATURES ---
     
     # Logic:
-    # 1. We identify the two "Slots" on the PDF by searching for the original names.
-    #    [cite_start]- Slot 1 (Left) is "Andrea Bondi"[cite: 48].
-    #    [cite_start]- Slot 2 (Right) is "Laura Carrera Nieto"[cite: 49].
-    # 2. We wipe both slots clean.
-    # 3. We fill them based on the logic:
-    #    - If Creator == Andrea: Fill Slot 1 only (Single template uses only Andrea).
-    #    - If Creator != Andrea: Fill Left with Andrea, Right with Creator.
+    # A. If Creator is Andrea: DO NOTHING. 
+    #    The template already has her signature (Single or Left slot).
+    #
+    # B. If Creator is NOT Andrea:
+    #    1. Leave Left Slot (Andrea) ALONE.
+    #    2. Find Right Slot (Laura).
+    #    3. Wipe "Laura" and insert "Creator".
 
-    # Search for placeholder names to find coordinates
-    slot_left_instances = page.search_for("Andrea Bondi")
-    slot_right_instances = page.search_for("Laura Carrera Nieto")
-    
-    # Prepare the list of signatures to insert
     sigs_to_place = []
 
-    # CASE A: ANDREA (Single Signer)
-    if creator_name == "Andrea Bondi":
-        # [cite_start]In the 1-signer template (Page 5), "Andrea Bondi" is the only name[cite: 66].
-        if slot_left_instances:
-            base_rect = slot_left_instances[0]
-            sigs_to_place.append({
-                "rect": base_rect,
-                "data": TEAM["Andrea Bondi"],
-                "name_override": "Andrea Bondi"
-            })
-            
-    # CASE B: OTHERS (Dual Signer)
-    else:
-        # We need two slots. 
+    if creator_name != "Andrea Bondi":
+        # We look for Laura to replace her with the Creator
+        slot_right_instances = page.search_for("Laura Carrera Nieto")
         
-        # Slot 1 (Left): ALWAYS Andrea Bondi
-        if slot_left_instances:
-            sigs_to_place.append({
-                "rect": slot_left_instances[0], # The position where "Andrea" was
-                "name_override": "Andrea Bondi",
-                "data": TEAM["Andrea Bondi"]     
-            })
-            
-        # Slot 2 (Right): The Creator
-        # Note: We replace whoever is in the right slot (Laura) with the Creator
         if slot_right_instances:
+            # We found Laura's slot. Replace it with the Creator.
             sigs_to_place.append({
                 "rect": slot_right_instances[0], 
-                "name_override": creator_name,  # Put Creator Name here
-                "data": TEAM[creator_name]      # Creator Details
+                "name_override": creator_name,  
+                "data": TEAM[creator_name]      
             })
-        elif not slot_right_instances and template_idx == 9: 
-             # [cite_start]Fallback: If we are on EasyMap Page 10[cite: 121], right slot is Laura.
-             # If exact text search fails (due to formatting), we might skip, but usually it works.
+        else:
+             # Fallback: If we can't find "Laura" text (e.g. unexpected formatting),
+             # we might try to hardcode coordinates, but usually text search is safest.
              pass
 
     # --- EXECUTE SIGNATURE REPLACEMENT ---
@@ -152,7 +121,6 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
         display_name = sig["name_override"]
         
         # 1. Define Cleaning Zone (Wipe old name, title, and signature space)
-        # We go up 50px to catch the signature, down 20px for title
         clean_rect = fitz.Rect(
             base_rect.x0 - 5,    
             base_rect.y0 - 50,   
@@ -180,6 +148,7 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
             sig["img_file"] = data["file"]
 
     # APPLY ERASING
+    # This deletes [Employee Name] AND [Laura Carrera Nieto] (if applicable)
     page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=fitz.PDF_REDACT_IMAGE_NONE)
 
     # INSERT TEXT
@@ -213,17 +182,17 @@ st.title("🎓 Certificate Generator")
 if not os.path.exists(TEMPLATE_FILENAME):
     st.error(f"⚠️ Error: '{TEMPLATE_FILENAME}' not found.")
 else:
-    # Sidebar Configuration
+    # Sidebar
     st.sidebar.header("Configuration")
     
-    # 1. Who is creating this?
     creator = st.sidebar.selectbox("Certificate Creator", list(TEAM.keys()))
     
-    # 2. Check for signature file
-    sig_status = "✅ Found" if os.path.exists(TEAM[creator]["file"]) else "❌ Missing in Repo"
-    st.sidebar.caption(f"Creator Sig: {sig_status}")
+    # Check signature file only if it's NOT Andrea (since we don't need Andrea's file anymore)
+    if creator != "Andrea Bondi":
+        sig_file = TEAM[creator]["file"]
+        sig_status = "✅ Found" if os.path.exists(sig_file) else "❌ Missing in Repo"
+        st.sidebar.caption(f"Creator Sig: {sig_status}")
 
-    # Tabs
     tab1, tab2 = st.tabs(["👤 Single Certificate", "👥 Batch Generation"])
     
     today_str = datetime.today().strftime('%d-%b-%Y')
@@ -237,9 +206,7 @@ else:
             s_submit = st.form_submit_button("Generate PDF")
         
         if s_submit and s_name:
-            # Calculate template index based on creator + type
             t_idx = get_template_index(s_type, creator)
-            
             try:
                 pdf_data = generate_pdf(TEMPLATE_FILENAME, t_idx, s_name, s_date, creator)
                 st.success(f"✅ Generated for {s_name}")
