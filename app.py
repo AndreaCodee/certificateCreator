@@ -17,10 +17,10 @@ SIG_SIZE       = {"w": 180, "h": 70}   # Width/Height of the signature image
 
 # TEAM DEFINITIONS
 TEAM = {
-    "Andrea Bondi":          "full_sig_andrea.png",
-    "Laura Carrera":         "full_sig_laura.png",
-    "Tomislav Cicin-Karlov": "full_sig_tomislav.png",
-    "Lisa Harrsen":          "full_sig_lisa.png"
+    "Andrea Bondi":          "sig_andrea.png",
+    "Laura Carrera":         "sig_laura.png",
+    "Tomislav Cicin-Karlov": "sig_tomislav.png",
+    "Lisa Harrsen":          "sig_lisa.png"
 }
 
 def get_template_index(mode, signer_name):
