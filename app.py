@@ -5,77 +5,68 @@ import os
 import zipfile
 from datetime import datetime
 
-# --- CONFIGURATION ---
+# --- 1. CONFIGURATION ---
 TEMPLATE_FILENAME = "Onboarding Certificate [CR team].pdf"
 
-# 1. DEFINE TEAM & FILES
-# NOTE: These PNGs must now contain the Signature AND the typed Name/Title.
+# COORDINATES (X, Y) - Adjust these to move signatures!
+# (0,0 is top-left. Increasing Y moves down. Increasing X moves right.)
+POS_SINGLE_SIG = {"x": 250, "y": 450}  # Where Andrea goes when alone
+POS_LEFT_SIG   = {"x": 100, "y": 450}  # Where Andrea goes in 2-signer layout
+POS_RIGHT_SIG  = {"x": 400, "y": 450}  # Where Creator goes in 2-signer layout
+SIG_SIZE       = {"w": 180, "h": 70}   # Width/Height of the signature image
+
+# TEAM DEFINITIONS
 TEAM = {
-    "Andrea Bondi": {
-        "file": "sig_andrea.png" # Not used for insertion, but good to have
-    },
-    "Laura Carrera": {
-        "file": "sig_laura.png"
-    },
-    "Tomislav Cicin-Karlov": {
-        "file": "sig_tomislav.png"
-    },
-    "Lisa Harrsen": {
-        "file": "sig_lisa.png"
-    }
+    "Andrea Bondi":          "full_sig_andrea.png",
+    "Laura Carrera":         "full_sig_laura.png",
+    "Tomislav Cicin-Karlov": "full_sig_tomislav.png",
+    "Lisa Harrsen":          "full_sig_lisa.png"
 }
 
 def get_template_index(mode, signer_name):
     """
-    Selects the correct page from the PDF.
-    - If your new template has different page numbers, adjust these indices!
-    - Currently: Monitoring (Pg 4/5), EasyMap (Pg 10)
+    Selects the page index. 
+    Adjust these indices if your 'Clean' template has different page numbers!
     """
     is_andrea = (signer_name == "Andrea Bondi")
     
     if mode == "Monitoring":
-        # If the new template merged everything into one layout, 
-        # you might just need one index here (e.g., always return 3).
-        # For now, keeping legacy logic just in case:
+        # Usually Page 5 (Index 4) is for Single Signer layout
+        # Usually Page 4 (Index 3) is for Double Signer layout
         return 4 if is_andrea else 3
     elif mode == "EasyMap":
-        return 9
+        return 9 # Page 10
     return 3
 
 def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
     doc = fitz.open(filename)
     page = doc[template_idx]
     
-    # --- PART 1: FILL EMPLOYEE NAME & DATE ---
+    # --- PART 1: FILL TEXT (Name & Date) ---
     
-    # 1. Find the baseline using "We acknowledge that"
+    # Analyze alignment
     ref_phrase = "We acknowledge that"
     ref_instances = page.search_for(ref_phrase)
     ref_y = None
     ref_height = 12 
-    
     if ref_instances:
         ref_rect = ref_instances[0]
         ref_y = ref_rect.y1
         ref_height = ref_rect.height
 
-    # 2. Define Content to Fill
     replacements = [
         {"placeholder": "[Employee Name]", "value": emp_name, "is_name": True},
         {"placeholder": "DD-MMM-YYYY", "value": date_str, "is_name": False}
     ]
 
-    insertions = []
-
-    # 3. Calculate Positions (and hide placeholders)
     for item in replacements:
         instances = page.search_for(item["placeholder"])
         if instances:
             for rect in instances:
-                # Mark placeholder for transparent deletion
+                # 1. Hide placeholder
                 page.add_redact_annot(rect)
                 
-                # Smart Alignment logic
+                # 2. Calculate position
                 if item["is_name"] and ref_y:
                     f_size = ref_height * 0.95 
                     insert_y = ref_y - 2 
@@ -83,73 +74,57 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
                     f_size = rect.height * 0.9
                     insert_y = rect.y1 - 2
 
-                insertions.append({
-                    "x": rect.x0, "y": insert_y, "text": item["value"],
-                    "size": f_size, "font": "hebo" if item["is_name"] else "helv",
-                    "color": (1, 1, 1) # White text
-                })
+                # 3. Insert Text
+                # Note: We apply redaction first to clear the space
+                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=fitz.PDF_REDACT_IMAGE_NONE)
+                
+                page.insert_text(
+                    fitz.Point(rect.x0, insert_y),
+                    item["value"],
+                    fontsize=f_size,
+                    fontname="hebo" if item["is_name"] else "helv",
+                    color=(1, 1, 1) # White
+                )
 
-    # --- PART 2: HANDLE SIGNATURES ---
+    # --- PART 2: INSERT SIGNATURE IMAGES ---
     
-    # Logic:
-    # 1. If Creator == Andrea: Do nothing (She is already in the template).
-    # 2. If Creator != Andrea: Insert their PNG to the right of Andrea.
+    sigs_to_insert = []
 
-    image_insertion = None
-
-    if creator_name != "Andrea Bondi":
-        # A. Find Andrea to use as an "Anchor"
-        anchor_text = "Andrea Bondi"
-        anchor_instances = page.search_for(anchor_text)
+    # LOGIC A: Andrea (Single Signer)
+    if creator_name == "Andrea Bondi":
+        # Insert Andrea in the Single Position
+        sigs_to_insert.append({
+            "file": TEAM["Andrea Bondi"],
+            "pos": POS_SINGLE_SIG
+        })
         
-        if anchor_instances:
-            base_rect = anchor_instances[0] # This is where "Andrea Bondi" is written
-            
-            # B. Calculate "Right Side" Position
-            # We want the new signature to be to the right of Andrea.
-            # Assuming standard layout, we shift X by roughly 250-300 points.
-            # We align the BOTTOM of the image with the text baseline.
-            
-            spacing_x = 280 # Distance between the two signatures
-            new_x = base_rect.x0 + spacing_x
-            
-            # Image Dimensions (Adjust these if your PNGs are huge/tiny)
-            # Width 150, Height 60 is a good standard for signature blocks
-            img_w = 150
-            img_h = 60
-            
-            # Create the rectangle for the image
-            # We align it so the text in the PNG roughly lands where the old text was
-            new_rect = fitz.Rect(new_x, base_rect.y1 - img_h + 5, new_x + img_w, base_rect.y1 + 5)
-            
-            # Check if file exists
-            sig_file = TEAM[creator_name]["file"]
-            if os.path.exists(sig_file):
-                image_insertion = {"rect": new_rect, "file": sig_file}
+    # LOGIC B: Others (Double Signer)
+    else:
+        # 1. Insert Andrea on LEFT (Always)
+        sigs_to_insert.append({
+            "file": TEAM["Andrea Bondi"],
+            "pos": POS_LEFT_SIG
+        })
+        
+        # 2. Insert Creator on RIGHT
+        sigs_to_insert.append({
+            "file": TEAM[creator_name],
+            "pos": POS_RIGHT_SIG
+        })
 
-    # --- EXECUTE CHANGES ---
+    # EXECUTE INSERTION
+    for sig in sigs_to_insert:
+        if os.path.exists(sig["file"]):
+            # Create Rect: (x, y, x+w, y+h)
+            x = sig["pos"]["x"]
+            y = sig["pos"]["y"]
+            rect = fitz.Rect(x, y, x + SIG_SIZE["w"], y + SIG_SIZE["h"])
+            
+            page.insert_image(rect, filename=sig["file"])
+        else:
+            print(f"Warning: Signature file {sig['file']} not found.")
 
-    # 1. Apply Redactions (Delete [Employee Name] placeholder)
-    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=fitz.PDF_REDACT_IMAGE_NONE)
-
-    # 2. Insert Name and Date
-    for insert in insertions:
-        page.insert_text(
-            fitz.Point(insert["x"], insert["y"]),
-            insert["text"],
-            fontsize=insert["size"],
-            fontname=insert["font"],
-            color=insert["color"]
-        )
-
-    # 3. Insert Signature Image (If applicable)
-    if image_insertion:
-        page.insert_image(
-            image_insertion["rect"],
-            filename=image_insertion["file"]
-        )
-
-    # Output
+    # SAVE
     output_buffer = io.BytesIO()
     output_doc = fitz.open()
     output_doc.insert_pdf(doc, from_page=template_idx, to_page=template_idx)
@@ -167,31 +142,28 @@ if not os.path.exists(TEMPLATE_FILENAME):
 else:
     # Sidebar
     st.sidebar.header("Configuration")
-    
     creator = st.sidebar.selectbox("Certificate Creator", list(TEAM.keys()))
     
-    # Check signature file logic
-    if creator != "Andrea Bondi":
-        sig_file = TEAM[creator]["file"]
-        if os.path.exists(sig_file):
-             st.sidebar.caption(f"✅ Signature found: {sig_file}")
-        else:
-             st.sidebar.error(f"❌ Missing file: {sig_file}")
-             st.sidebar.info("Please upload the PNG to the repository.")
+    # Check images
+    if not os.path.exists(TEAM[creator]):
+        st.sidebar.error(f"❌ Missing Image: {TEAM[creator]}")
 
     tab1, tab2 = st.tabs(["👤 Single Certificate", "👥 Batch Generation"])
-    
     today_str = datetime.today().strftime('%d-%b-%Y')
+    
+    # Mode Selection Map
+    idx_map = {"Monitoring": "Monitoring", "EasyMap": "EasyMap"}
 
-    # --- SINGLE MODE ---
+    # --- SINGLE ---
     with tab1:
         with st.form("single_form"):
             s_name = st.text_input("Employee Name", placeholder="Mario Rossi")
             s_date = st.text_input("Date", value=today_str)
-            s_type = st.selectbox("Certificate Type", ["Monitoring", "EasyMap"])
+            s_type = st.selectbox("Certificate Type", list(idx_map.keys()))
             s_submit = st.form_submit_button("Generate PDF")
         
         if s_submit and s_name:
+            # Get Page Index
             t_idx = get_template_index(s_type, creator)
             try:
                 pdf_data = generate_pdf(TEMPLATE_FILENAME, t_idx, s_name, s_date, creator)
@@ -200,13 +172,13 @@ else:
             except Exception as e:
                 st.error(f"Error: {e}")
 
-    # --- BATCH MODE ---
+    # --- BATCH ---
     with tab2:
         with st.form("batch_form"):
             b_names = st.text_area("List of Names", height=150)
             c1, c2 = st.columns(2)
             with c1: b_date = st.text_input("Date", value=today_str, key="bd")
-            with c2: b_type = st.selectbox("Certificate Type", ["Monitoring", "EasyMap"], key="bt")
+            with c2: b_type = st.selectbox("Certificate Type", list(idx_map.keys()), key="bt")
             b_submit = st.form_submit_button("Generate Batch")
         
         if b_submit and b_names:
