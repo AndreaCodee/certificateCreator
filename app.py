@@ -5,17 +5,11 @@ import os
 import zipfile
 from datetime import datetime
 
-# --- 1. CONFIGURATION ---
+# --- CONFIGURATION ---
 TEMPLATE_FILENAME = "Onboarding Certificate [CR team].pdf"
 
-# COORDINATES (X, Y) - Adjust these to move signatures!
-# (0,0 is top-left. Increasing Y moves down. Increasing X moves right.)
-POS_SINGLE_SIG = {"x": 250, "y": 450}  # Where Andrea goes when alone
-POS_LEFT_SIG   = {"x": 100, "y": 450}  # Where Andrea goes in 2-signer layout
-POS_RIGHT_SIG  = {"x": 400, "y": 450}  # Where Creator goes in 2-signer layout
-SIG_SIZE       = {"w": 180, "h": 70}   # Width/Height of the signature image
-
 # TEAM DEFINITIONS
+# Make sure these filenames match your uploaded files EXACTLY!
 TEAM = {
     "Andrea Bondi":          "sig_andrea.png",
     "Laura Carrera":         "sig_laura.png",
@@ -23,28 +17,11 @@ TEAM = {
     "Lisa Harrsen":          "sig_lisa.png"
 }
 
-def get_template_index(mode, signer_name):
-    """
-    Selects the page index. 
-    Adjust these indices if your 'Clean' template has different page numbers!
-    """
-    is_andrea = (signer_name == "Andrea Bondi")
-    
-    if mode == "Monitoring":
-        # Usually Page 5 (Index 4) is for Single Signer layout
-        # Usually Page 4 (Index 3) is for Double Signer layout
-        return 4 if is_andrea else 3
-    elif mode == "EasyMap":
-        return 9 # Page 10
-    return 3
-
-def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
+def generate_pdf(filename, template_idx, emp_name, date_str, creator_name, pos_config):
     doc = fitz.open(filename)
     page = doc[template_idx]
     
     # --- PART 1: FILL TEXT (Name & Date) ---
-    
-    # Analyze alignment
     ref_phrase = "We acknowledge that"
     ref_instances = page.search_for(ref_phrase)
     ref_y = None
@@ -63,10 +40,8 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
         instances = page.search_for(item["placeholder"])
         if instances:
             for rect in instances:
-                # 1. Hide placeholder
                 page.add_redact_annot(rect)
                 
-                # 2. Calculate position
                 if item["is_name"] and ref_y:
                     f_size = ref_height * 0.95 
                     insert_y = ref_y - 2 
@@ -74,8 +49,7 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
                     f_size = rect.height * 0.9
                     insert_y = rect.y1 - 2
 
-                # 3. Insert Text
-                # Note: We apply redaction first to clear the space
+                # Apply redaction immediately to clear space
                 page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=fitz.PDF_REDACT_IMAGE_NONE)
                 
                 page.insert_text(
@@ -89,42 +63,44 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
     # --- PART 2: INSERT SIGNATURE IMAGES ---
     
     sigs_to_insert = []
-
-    # LOGIC A: Andrea (Single Signer)
+    
+    # Get coordinates from user sliders
+    y_pos = pos_config["y_pos"]
+    
+    # 1. ANDREA (Single Mode)
     if creator_name == "Andrea Bondi":
-        # Insert Andrea in the Single Position
         sigs_to_insert.append({
             "file": TEAM["Andrea Bondi"],
-            "pos": POS_SINGLE_SIG
+            "x": pos_config["x_single"] # Center/Single Position
         })
         
-    # LOGIC B: Others (Double Signer)
+    # 2. OTHERS (Dual Mode)
     else:
-        # 1. Insert Andrea on LEFT (Always)
+        # Andrea on LEFT
         sigs_to_insert.append({
             "file": TEAM["Andrea Bondi"],
-            "pos": POS_LEFT_SIG
+            "x": pos_config["x_left"]
         })
-        
-        # 2. Insert Creator on RIGHT
+        # Creator on RIGHT
         sigs_to_insert.append({
             "file": TEAM[creator_name],
-            "pos": POS_RIGHT_SIG
+            "x": pos_config["x_right"]
         })
 
-    # EXECUTE INSERTION
+    # Execute Insertion
     for sig in sigs_to_insert:
         if os.path.exists(sig["file"]):
-            # Create Rect: (x, y, x+w, y+h)
-            x = sig["pos"]["x"]
-            y = sig["pos"]["y"]
-            rect = fitz.Rect(x, y, x + SIG_SIZE["w"], y + SIG_SIZE["h"])
-            
+            # Define Box: x, y, x+width, y+height
+            # We use the sliders for X and Y
+            rect = fitz.Rect(
+                sig["x"], 
+                y_pos, 
+                sig["x"] + pos_config["width"], 
+                y_pos + pos_config["height"]
+            )
             page.insert_image(rect, filename=sig["file"])
-        else:
-            print(f"Warning: Signature file {sig['file']} not found.")
 
-    # SAVE
+    # Output
     output_buffer = io.BytesIO()
     output_doc = fitz.open()
     output_doc.insert_pdf(doc, from_page=template_idx, to_page=template_idx)
@@ -134,63 +110,98 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
     return output_buffer.getvalue()
 
 # --- STREAMLIT UI ---
-st.set_page_config(page_title="Cert Generator", layout="centered")
+st.set_page_config(page_title="Cert Generator", layout="wide") # Wide layout for side-by-side view
 st.title("🎓 Certificate Generator")
 
+# Check Template
 if not os.path.exists(TEMPLATE_FILENAME):
     st.error(f"⚠️ Error: '{TEMPLATE_FILENAME}' not found.")
+    st.stop()
+
+# --- SIDEBAR: CONFIGURATION & CALIBRATION ---
+st.sidebar.header("1. Creator")
+creators = list(TEAM.keys())
+creator = st.sidebar.selectbox("Who is creating this?", creators)
+
+# Check Image
+sig_file = TEAM[creator]
+if os.path.exists(sig_file):
+    st.sidebar.success(f"✅ Sig Found: {sig_file}")
 else:
-    # Sidebar
-    st.sidebar.header("Configuration")
-    creator = st.sidebar.selectbox("Certificate Creator", list(TEAM.keys()))
-    
-    # Check images
-    if not os.path.exists(TEAM[creator]):
-        st.sidebar.error(f"❌ Missing Image: {TEAM[creator]}")
+    st.sidebar.error(f"❌ Missing: {sig_file}")
+    st.sidebar.info("Please upload the .png file to the repo.")
 
-    tab1, tab2 = st.tabs(["👤 Single Certificate", "👥 Batch Generation"])
-    today_str = datetime.today().strftime('%d-%b-%Y')
-    
-    # Mode Selection Map
-    idx_map = {"Monitoring": "Monitoring", "EasyMap": "EasyMap"}
+st.sidebar.markdown("---")
+st.sidebar.header("2. Position Calibration")
+st.sidebar.info("Adjust these sliders to move the signature.")
 
-    # --- SINGLE ---
-    with tab1:
+# Default values are guesses - Adjust them in the app!
+pos_config = {
+    "y_pos":    st.sidebar.slider("Vertical Position (Y)", 300, 600, 450, help="Higher number = Lower on page"),
+    "x_single": st.sidebar.slider("Single Sig (X)", 0, 600, 250, help="Horizontal pos for Andrea alone"),
+    "x_left":   st.sidebar.slider("Left Sig (X)", 0, 400, 100, help="Horizontal pos for Left signature"),
+    "x_right":  st.sidebar.slider("Right Sig (X)", 200, 800, 400, help="Horizontal pos for Right signature"),
+    "width":    st.sidebar.slider("Image Width", 50, 300, 180),
+    "height":   st.sidebar.slider("Image Height", 20, 150, 70)
+}
+
+# --- MAIN AREA ---
+tab1, tab2 = st.tabs(["👤 Single Certificate", "👥 Batch Generation"])
+today_str = datetime.today().strftime('%d-%b-%Y')
+idx_map = {"Monitoring": "Monitoring", "EasyMap": "EasyMap"}
+
+def get_template_index(mode, signer_name):
+    # Adjust these indices if your new template has different pages!
+    is_andrea = (signer_name == "Andrea Bondi")
+    if mode == "Monitoring":
+        return 4 if is_andrea else 3
+    elif mode == "EasyMap":
+        return 9
+    return 3
+
+# SINGLE MODE
+with tab1:
+    col1, col2 = st.columns([1, 2])
+    with col1:
         with st.form("single_form"):
             s_name = st.text_input("Employee Name", placeholder="Mario Rossi")
             s_date = st.text_input("Date", value=today_str)
-            s_type = st.selectbox("Certificate Type", list(idx_map.keys()))
-            s_submit = st.form_submit_button("Generate PDF")
-        
+            s_type = st.selectbox("Type", list(idx_map.keys()))
+            s_submit = st.form_submit_button("Generate & Preview")
+    
+    with col2:
         if s_submit and s_name:
-            # Get Page Index
             t_idx = get_template_index(s_type, creator)
             try:
-                pdf_data = generate_pdf(TEMPLATE_FILENAME, t_idx, s_name, s_date, creator)
-                st.success(f"✅ Generated for {s_name}")
-                st.download_button("⬇️ Download PDF", pdf_data, f"{s_name.replace(' ', '_')}_Certificate.pdf", "application/pdf")
+                pdf_data = generate_pdf(TEMPLATE_FILENAME, t_idx, s_name, s_date, creator, pos_config)
+                
+                st.success("✅ Generated! If position is wrong, adjust sliders on the left.")
+                
+                # Download
+                st.download_button("⬇️ Download PDF", pdf_data, f"{s_name}_Cert.pdf", "application/pdf")
+                
             except Exception as e:
                 st.error(f"Error: {e}")
 
-    # --- BATCH ---
-    with tab2:
-        with st.form("batch_form"):
-            b_names = st.text_area("List of Names", height=150)
-            c1, c2 = st.columns(2)
-            with c1: b_date = st.text_input("Date", value=today_str, key="bd")
-            with c2: b_type = st.selectbox("Certificate Type", list(idx_map.keys()), key="bt")
-            b_submit = st.form_submit_button("Generate Batch")
+# BATCH MODE
+with tab2:
+    with st.form("batch_form"):
+        b_names = st.text_area("List of Names", height=150)
+        c1, c2 = st.columns(2)
+        with c1: b_date = st.text_input("Date", value=today_str, key="bd")
+        with c2: b_type = st.selectbox("Type", list(idx_map.keys()), key="bt")
+        b_submit = st.form_submit_button("Generate Batch")
+    
+    if b_submit and b_names:
+        names = [n.strip() for n in b_names.split('\n') if n.strip()]
+        t_idx = get_template_index(b_type, creator)
         
-        if b_submit and b_names:
-            names = [n.strip() for n in b_names.split('\n') if n.strip()]
-            t_idx = get_template_index(b_type, creator)
-            
-            if names:
-                zip_buffer = io.BytesIO()
-                with st.spinner(f"Processing {len(names)} certificates..."):
-                    with zipfile.ZipFile(zip_buffer, "w") as zf:
-                        for name in names:
-                            pdf_bytes = generate_pdf(TEMPLATE_FILENAME, t_idx, name, b_date, creator)
-                            zf.writestr(f"{name.replace(' ', '_')}_Certificate.pdf", pdf_bytes)
-                st.success("✅ Batch Complete!")
-                st.download_button("📦 Download ZIP", zip_buffer.getvalue(), f"Certificates_{datetime.today().strftime('%Y%m%d')}.zip", "application/zip")
+        if names:
+            zip_buffer = io.BytesIO()
+            with st.spinner(f"Processing {len(names)} certificates..."):
+                with zipfile.ZipFile(zip_buffer, "w") as zf:
+                    for name in names:
+                        pdf_bytes = generate_pdf(TEMPLATE_FILENAME, t_idx, name, b_date, creator, pos_config)
+                        zf.writestr(f"{name.replace(' ', '_')}_Certificate.pdf", pdf_bytes)
+            st.success(f"✅ Created {len(names)} certificates!")
+            st.download_button("📦 Download ZIP", zip_buffer.getvalue(), "Certificates.zip", "application/zip")
