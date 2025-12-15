@@ -83,7 +83,7 @@ def generate_pdf(filename, template_idx, emp_name, date_str, creator_name):
                 
                 if item["is_name"] and ref_y:
                     f_size = ref_h * 0.95 
-                    t_y = ref_y - 2 
+                    t_y = ref_y - 4 
                 else:
                     f_size = rect.height * 0.9
                     t_y = rect.y1 - 2
